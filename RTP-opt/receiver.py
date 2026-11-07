@@ -17,6 +17,8 @@ def receiver(receiver_ip, receiver_port, window_size):
 
     expected_seq = 0
     buffer = {}
+    end_received = False
+    end_seq = -1
 
     while True:
         pkt, address = s.recvfrom(2048)
@@ -34,12 +36,18 @@ def receiver(receiver_ip, receiver_port, window_size):
             if expected_seq == 0:
                 expected_seq = 1
                 send_ack(s, address, 1)
+            elif expected_seq == 1:
+                send_ack(s, address, 1)
+            continue
+
+        if expected_seq == 0:
             continue
 
         elif pkt_header.type == 2:
             if pkt_header.seq_num >= expected_seq + window_size:
                 continue
 
+            # RTP-opt: luon ACK rieng le cho dung so seq_num cua goi nhan duoc
             send_ack(s, address, pkt_header.seq_num)
 
             if pkt_header.seq_num > expected_seq:
@@ -54,9 +62,15 @@ def receiver(receiver_ip, receiver_port, window_size):
                     sys.stdout.buffer.flush()
                     expected_seq += 1
 
+                if end_received and expected_seq == end_seq:
+                    send_ack(s, address, end_seq)
+                    break
+
         elif pkt_header.type == 1:
+            end_received = True
+            end_seq = pkt_header.seq_num
+            send_ack(s, address, pkt_header.seq_num)
             if pkt_header.seq_num == expected_seq:
-                send_ack(s, address, pkt_header.seq_num)
                 break
 
     s.close()

@@ -12,22 +12,20 @@ def send_ack(s, address, seq_num):
 
 
 def receiver(receiver_ip, receiver_port, window_size):
-    """TODO: Listen on socket and print received message to sys.stdout."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind((receiver_ip, receiver_port))
 
     expected_seq = 0
     buffer = {}
+    end_received = False
+    end_seq = -1
 
     while True:
-        # Receive packet; address includes both IP and port
         pkt, address = s.recvfrom(2048)
 
-        # Extract header and payload
         pkt_header = PacketHeader(pkt[:16])
         msg = pkt[16 : 16 + pkt_header.length]
 
-        # Verify checksum
         pkt_checksum = pkt_header.checksum
         pkt_header.checksum = 0
         computed_checksum = compute_checksum(pkt_header / msg)
@@ -38,6 +36,11 @@ def receiver(receiver_ip, receiver_port, window_size):
             if expected_seq == 0:
                 expected_seq = 1
                 send_ack(s, address, 1)
+            elif expected_seq == 1:
+                send_ack(s, address, 1)
+            continue
+
+        if expected_seq == 0:
             continue
 
         elif pkt_header.type == 2:
@@ -61,7 +64,13 @@ def receiver(receiver_ip, receiver_port, window_size):
 
                 send_ack(s, address, expected_seq)
 
+                if end_received and expected_seq == end_seq:
+                    send_ack(s, address, end_seq)
+                    break
+
         elif pkt_header.type == 1:
+            end_received = True
+            end_seq = pkt_header.seq_num
             if pkt_header.seq_num == expected_seq:
                 send_ack(s, address, pkt_header.seq_num)
                 break

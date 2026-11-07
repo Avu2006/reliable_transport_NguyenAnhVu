@@ -38,13 +38,19 @@ def sender(receiver_ip, receiver_port, window_size):
     for i, chunk in enumerate(chunks):
         packets[i + 1] = make_pkt(2, i + 1, chunk)
 
-    s.sendto(make_pkt(0, 0), dest)
+    # 1. bat tay START
     while True:
-        pkt, _ = s.recvfrom(2048)
-        valid, ack_seq = parse_ack(pkt)
-        if valid and ack_seq == 1:
-            break
+        s.sendto(make_pkt(0, 0), dest)
+        s.settimeout(0.5)
+        try:
+            pkt, _ = s.recvfrom(2048)
+            valid, ack_seq = parse_ack(pkt)
+            if valid and ack_seq == 1:
+                break
+        except (socket.timeout, BlockingIOError):
+            pass
 
+    # 2. truyen data theo sliding window (Go-Back-N)
     base = 1
     next_seq = 1
     last_ack_time = time.time()
@@ -54,7 +60,13 @@ def sender(receiver_ip, receiver_port, window_size):
         next_seq += 1
 
     while base <= total_pkts:
-        remain = max(0.0, 0.5 - (time.time() - last_ack_time))
+        remain = 0.5 - (time.time() - last_ack_time)
+        if remain <= 0:
+            for seq in range(base, next_seq):
+                s.sendto(packets[seq], dest)
+            last_ack_time = time.time()
+            continue
+
         s.settimeout(remain)
         try:
             pkt, _ = s.recvfrom(2048)
@@ -66,22 +78,29 @@ def sender(receiver_ip, receiver_port, window_size):
                 while next_seq <= total_pkts and next_seq < base + window_size:
                     s.sendto(packets[next_seq], dest)
                     next_seq += 1
-        except socket.timeout:
+        except (socket.timeout, BlockingIOError):
             for seq in range(base, next_seq):
                 s.sendto(packets[seq], dest)
             last_ack_time = time.time()
 
+    # 3. ket thuc bang goi END
     end_seq = total_pkts + 1
-    s.sendto(make_pkt(1, end_seq), dest)
-    s.settimeout(0.5)
-    try:
-        while True:
+    end_start_time = time.time()
+    while True:
+        s.sendto(make_pkt(1, end_seq), dest)
+        remain = 0.5 - (time.time() - end_start_time)
+        if remain <= 0:
+            break
+        s.settimeout(remain)
+        try:
             pkt, _ = s.recvfrom(2048)
             valid, ack_seq = parse_ack(pkt)
             if valid and ack_seq == end_seq:
                 break
-    except socket.timeout:
-        pass
+        except (socket.timeout, BlockingIOError):
+            pass
+        if time.time() - end_start_time >= 0.5:
+            break
 
     s.close()
 
